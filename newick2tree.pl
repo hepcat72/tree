@@ -7,7 +7,7 @@
 #Copyright 2008
 
 #These variables (in main) are used by getVersion() and usage()
-my $software_version_number = '1.0';
+my $software_version_number = '1.1';
 my $created_on_date         = '2/23/2012';
 
 ##
@@ -29,6 +29,7 @@ my $overwrite           = 0;
 my $noheader            = 0;
 my $warn_report_limit   = 3;
 my $error_report_limit  = 0;
+my $get_euclid          = 0;
 
 #These variables (in main) are used by the following subroutines:
 #verbose, error, warning, debug, getCommand, quit, and usage
@@ -45,6 +46,7 @@ my $GetOptHash =
 				       [sglob($_[1])])}, #         supplied
    '<>'                   => sub {push(@input_files,     #REQUIRED unless -i is
 				       [sglob($_[0])])}, #         supplied
+   'd|get-distances!'     => \$get_euclid,               #OPTIONAL [Off]
    'o|outfile-suffix=s'   => \$outfile_suffix,           #OPTIONAL [undef]
    'outdir=s'             => sub {push(@outdirs,         #OPTIONAL
 				       [sglob($_[1])])},
@@ -354,25 +356,6 @@ if(scalar(@outdirs))
 verbose('Run conditions: ',getCommand(1));
 
 
-
-
-
-
-
-
-
-##
-## ENTER YOUR PRE-FILE-PROCESSING CODE HERE
-##
-
-
-
-
-
-
-
-
-
 #If output is going to STDOUT instead of output files with different extensions
 #or if STDOUT was redirected, output run info once
 verbose('[STDOUT] Opened for all output.') if(!defined($outfile_suffix));
@@ -532,6 +515,9 @@ foreach my $input_file_set (@input_files)
 	my $indent  = -1; #Degree of indent
 	my $intnode = 1;  #Number of internal nodes (used as labels)
 
+	my @outline_array = ();
+	my @indent_stack  = ();
+
 	#For each line in the current input file
 	while(getLine(*INPUT))
 	  {
@@ -548,21 +534,43 @@ foreach my $input_file_set (@input_files)
 	    foreach(split(/(?<=[\(\),])/,$line))
 	      {
 		if(/\(/)
-		  {$indent++}
-
-		if(/([^:,\)\(\n]+):/)
 		  {
-		    my $id = $1;
-		    print(" " x $indent," ",$id,"\n");
+		    debug("Indenting");
+		    $indent++;
+		  }
+
+		if(/([^:,\)\(\n]+):([\d\.]+)/)
+		  {
+		    my $id   = $1;
+		    my $dist = $2;
+		    debug("Storing leaf node $id");
+		    push(@outline_array," " x $indent . " " . $id .
+			 ($get_euclid ? ' {' . $dist . '}' : ''));
 		  }
 		elsif(/\(\s*$/)
 		  {
-		    print((" " x $indent),"$intnode\n");
+		    debug("Storing internal node $intnode");
+		    push(@outline_array,(" " x $indent) . $intnode);
+		    #Store the reference to this internal node string
+		    push(@indent_stack,\$outline_array[-1]);
 		    $intnode++;
 		  }
+		elsif(/^:([\d\.]+)/)
+		  {
+		    my $dist = $1;
+		    $dist = '' unless(defined($dist));
+		    my $node_ref = pop(@indent_stack);
+		    debug("Applying distance to internal node $$node_ref");
+		    $$node_ref .= " {$dist}" if($get_euclid);
+		  }
+		elsif($_ !~ /^;\s*$/)
+		  {error("Unable to parse tree segment: [$_].")}
 
-		if(/\)/)
-		  {$indent--}
+		if(/\)(?:\z|;|:([\d\.]+))/)
+		  {
+		    debug("Unindenting");
+		    $indent--;
+		  }
 	      }
 	  }
 
@@ -571,6 +579,11 @@ foreach my $input_file_set (@input_files)
 	verbose('[',($input_file eq '-' ? $outfile_stub : $input_file),'] ',
 		'Input file done.  Time taken: [',scalar(markTime()),
 		' Seconds].');
+
+	if($intnode == 1)
+	  {error("Unable to parse newick tree file.")}
+
+	print(join("\n",@outline_array),"\n");
 
 	#If an output file name suffix is set
 	if(defined($outfile_suffix))
@@ -584,26 +597,6 @@ foreach my $input_file_set (@input_files)
 	  }
       }
   }
-
-
-
-
-
-
-
-
-
-
-##
-## ENTER YOUR POST-FILE-PROCESSING CODE HERE
-##
-
-
-
-
-
-
-
 
 
 verbose("[STDOUT] Output done.") if(!defined($outfile_suffix));
@@ -861,6 +854,10 @@ end_print
                                    --help for a description of the input file
                                    format.  See --help for advanced usage.
                                    *No flag required.
+     -d|--get-distances   OPTIONAL [Off] Parse the euclidean distances from the
+                                   newick tree and include them in the output
+                                   tree file.  Node names will be followed by
+                                   " {distance}".
      -o|--outfile-suffix  OPTIONAL [nothing] This suffix is added to the input
                                    file names to use as output files.
                                    Redirecting a file into this script will
